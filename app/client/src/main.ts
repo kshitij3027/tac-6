@@ -3,6 +3,37 @@ import { api } from './api/client'
 
 // Global state
 
+// SQL of the most recently displayed query results, used by the results CSV export
+let lastQuerySql = '';
+
+// Download icon (downward arrow into a tray), rendered inline so it inherits currentColor
+const DOWNLOAD_ICON_SVG = `
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="1rem" height="1rem"
+       fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+    <polyline points="7 10 12 15 17 10"></polyline>
+    <line x1="12" y1="15" x2="12" y2="3"></line>
+  </svg>
+`;
+
+// Trigger a table CSV export, surfacing any failure via the standard error display
+async function exportTable(tableName: string) {
+  try {
+    await api.exportTable(tableName);
+  } catch (error) {
+    displayError(error instanceof Error ? error.message : 'Failed to export table');
+  }
+}
+
+// Trigger a query-results CSV export, surfacing any failure via the standard error display
+async function exportQueryResults(sql: string) {
+  try {
+    await api.exportQueryResults(sql);
+  } catch (error) {
+    displayError(error instanceof Error ? error.message : 'Failed to export results');
+  }
+}
+
 // Initialize app
 document.addEventListener('DOMContentLoaded', () => {
   initializeQueryInput();
@@ -188,7 +219,10 @@ function displayResults(response: QueryResponse, query: string) {
   const resultsContainer = document.getElementById('results-container') as HTMLDivElement;
   
   resultsSection.style.display = 'block';
-  
+
+  // Track the SQL so the results export knows what to re-run
+  lastQuerySql = response.sql;
+
   // Display natural language query and SQL
   sqlDisplay.innerHTML = `
     <div class="query-display">
@@ -216,6 +250,35 @@ function displayResults(response: QueryResponse, query: string) {
     resultsContainer.style.display = resultsContainer.style.display === 'none' ? 'block' : 'none';
     toggleButton.textContent = resultsContainer.style.display === 'none' ? 'Show' : 'Hide';
   });
+
+  // Group the toggle button into a flex actions container (once) so the download
+  // button can sit directly to its left without the header's space-between layout
+  // scattering the buttons apart.
+  const resultsHeader = toggleButton.parentElement as HTMLElement;
+  let resultsActions = resultsHeader.querySelector('.results-actions') as HTMLElement | null;
+  if (!resultsActions) {
+    resultsActions = document.createElement('div');
+    resultsActions.className = 'results-actions';
+    resultsHeader.appendChild(resultsActions);
+    resultsActions.appendChild(toggleButton);
+  }
+
+  // Add (or refresh) the results download button directly to the left of the toggle button.
+  // Only present when there are displayable results (no error and at least one row).
+  const existingDownload = resultsActions.querySelector('.download-results-button');
+  if (existingDownload) {
+    existingDownload.remove();
+  }
+
+  const hasResults = !response.error && response.row_count > 0;
+  if (hasResults) {
+    const downloadButton = document.createElement('button');
+    downloadButton.className = 'download-results-button';
+    downloadButton.title = 'Download results as CSV';
+    downloadButton.innerHTML = DOWNLOAD_ICON_SVG;
+    downloadButton.onclick = () => exportQueryResults(lastQuerySql);
+    resultsActions.insertBefore(downloadButton, toggleButton);
+  }
 }
 
 // Create results table
@@ -285,14 +348,26 @@ function displayTables(tables: TableSchema[]) {
     tableLeft.appendChild(tableName);
     tableLeft.appendChild(tableInfo);
     
+    const downloadButton = document.createElement('button');
+    downloadButton.className = 'download-table-button';
+    downloadButton.title = 'Download table as CSV';
+    downloadButton.innerHTML = DOWNLOAD_ICON_SVG;
+    downloadButton.onclick = () => exportTable(table.name);
+
     const removeButton = document.createElement('button');
     removeButton.className = 'remove-table-button';
     removeButton.innerHTML = '&times;';
     removeButton.title = 'Remove table';
     removeButton.onclick = () => removeTable(table.name);
-    
+
+    // Group the actions so the download button sits directly left of the × button
+    const tableActions = document.createElement('div');
+    tableActions.className = 'table-actions';
+    tableActions.appendChild(downloadButton);
+    tableActions.appendChild(removeButton);
+
     tableHeader.appendChild(tableLeft);
-    tableHeader.appendChild(removeButton);
+    tableHeader.appendChild(tableActions);
     
     // Columns section
     const tableColumns = document.createElement('div');
