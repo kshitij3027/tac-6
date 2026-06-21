@@ -29,3 +29,10 @@ This prompt helps you determine what documentation you should read based on the 
 - adws/README.md
   - Conditions:
     - When you're operating in the `adws/` directory
+
+- app_docs/feature-46199b73-one-click-csv-exports.md
+  - Conditions:
+    - When working with CSV export functionality for tables or query results
+    - When implementing or modifying the `/api/export/table` or `/api/export/query` endpoints
+    - When adding or changing download buttons in the Available Tables or Query Results UI sections
+    - When troubleshooting file download behavior (blob download pattern, Content-Disposition headers)
