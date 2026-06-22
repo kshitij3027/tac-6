@@ -25,6 +25,11 @@ interface QueryResponse {
   error?: string;
 }
 
+// Export Types
+interface QueryExportRequest {
+  sql: string;
+}
+
 // Database Schema Types
 interface ColumnInfo {
   name: string;

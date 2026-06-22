@@ -1,6 +1,9 @@
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from datetime import datetime
+import csv
+import io
 import os
 import sqlite3
 import traceback
@@ -12,6 +15,7 @@ from core.data_models import (
     FileUploadResponse,
     QueryRequest,
     QueryResponse,
+    QueryExportRequest,
     DatabaseSchemaResponse,
     InsightsRequest,
     InsightsResponse,
@@ -303,6 +307,109 @@ async def delete_table(table_name: str):
         logger.error(f"[ERROR] Table deletion failed: {str(e)}")
         logger.error(f"[ERROR] Full traceback:\n{traceback.format_exc()}")
         raise HTTPException(500, f"Error deleting table: {str(e)}")
+
+def rows_to_csv(columns: list[str], rows: list[dict]) -> str:
+    """
+    Convert a list of row dictionaries and an ordered column list into a CSV string.
+
+    Args:
+        columns: Ordered list of column names used as the CSV header.
+        rows: List of row dictionaries keyed by column name.
+
+    Returns:
+        str: The CSV-formatted content (header row followed by data rows).
+    """
+    output = io.StringIO()
+    writer = csv.DictWriter(
+        output,
+        fieldnames=columns,
+        extrasaction='ignore',
+        restval=''
+    )
+    writer.writeheader()
+    for row in rows:
+        # Render None as empty string for clean CSV output
+        writer.writerow({col: ('' if row.get(col) is None else row.get(col)) for col in columns})
+    return output.getvalue()
+
+
+@app.get("/api/export/table/{table_name}")
+async def export_table(table_name: str):
+    """Export an entire table as a downloadable CSV file"""
+    conn = None
+    try:
+        # Validate table name using security module
+        try:
+            validate_identifier(table_name, "table")
+        except SQLSecurityError as e:
+            raise HTTPException(400, str(e))
+
+        conn = sqlite3.connect("db/database.db")
+        conn.row_factory = sqlite3.Row
+
+        # Check if table exists using secure method
+        if not check_table_exists(conn, table_name):
+            raise HTTPException(404, f"Table '{table_name}' not found")
+
+        # Fetch all rows using safe query execution
+        cursor = execute_query_safely(
+            conn,
+            "SELECT * FROM {table}",
+            identifier_params={'table': table_name}
+        )
+        rows = cursor.fetchall()
+
+        # Derive columns from cursor description (works even with zero rows)
+        columns = [desc[0] for desc in cursor.description] if cursor.description else []
+        row_dicts = [dict(row) for row in rows]
+
+        csv_content = rows_to_csv(columns, row_dicts)
+
+        logger.info(f"[SUCCESS] Table exported: {table_name}, rows={len(row_dicts)}")
+        return Response(
+            content=csv_content,
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": f'attachment; filename="{table_name}.csv"'
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[ERROR] Table export failed: {str(e)}")
+        logger.error(f"[ERROR] Full traceback:\n{traceback.format_exc()}")
+        raise HTTPException(500, f"Error exporting table: {str(e)}")
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+@app.post("/api/export/query")
+async def export_query(request: QueryExportRequest):
+    """Export query results as a downloadable CSV file"""
+    try:
+        # Re-execute the supplied SQL through the existing security validation layer
+        result = execute_sql_safely(request.sql)
+
+        if result['error']:
+            raise HTTPException(400, result['error'])
+
+        csv_content = rows_to_csv(result['columns'], result['results'])
+
+        logger.info(f"[SUCCESS] Query results exported: SQL={request.sql}, rows={len(result['results'])}")
+        return Response(
+            content=csv_content,
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": 'attachment; filename="query_results.csv"'
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[ERROR] Query export failed: {str(e)}")
+        logger.error(f"[ERROR] Full traceback:\n{traceback.format_exc()}")
+        raise HTTPException(500, f"Error exporting query results: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn
